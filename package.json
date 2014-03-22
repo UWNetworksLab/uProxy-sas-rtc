@@ -1,0 +1,22 @@
+{
+  "name": "socks-rtc",
+  "description": "Library for proxying SOCKS5 over WebRTC",
+  "version": "0.1.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/uProxy/socks-rtc"
+  },
+  "devDependencies": {
+    "grunt": "~0.4.4",
+    "grunt-contrib-jasmine": "~0.6.1",
+    "grunt-contrib-clean": "~0.5.0",
+    "grunt-contrib-coffee": "~0.7.0",
+    "grunt-contrib-copy": "~0.4.1",
+    "grunt-typescript": "~0.2.10",
+    "grunt-jasmine-node": "git://github.com/vojtajina/grunt-jasmine-node.git#fix-grunt-exit-code",
+    "grunt-env": "~0.4.1"
+  },
+  "scripts": {
+    "test": "grunt --verbose"
+  }
+}
