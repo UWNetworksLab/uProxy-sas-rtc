@@ -4,6 +4,7 @@
 // Type injections.
 interface Window { URL :any; }
 interface HTMLElement { src :string; }
+interface mozRTCPeerConnection extends RTCPeerConnection {}
 
 /**
  * Contains all of SAS-RTC functionality.
@@ -11,38 +12,28 @@ interface HTMLElement { src :string; }
  */
 module SasRtc {
 
-  /**
-   * Initialize the local view upon the id of <video> DOM object.
-   */
-  export function initializeLocalMedia(vidId:string) {
-    var $vid = document.getElementById(vidId);
-    if (!$vid) {
-      console.error('No DOM video element: ' + vidId);
-      return;
-    }
+  var RTCPC = RTCPC || webkitRTCPeerConnection;  // || mozRTCPeerConnection;
 
-    mediaPromise()
-        .then((stream:MediaStream) => {
-          $vid.src = window.URL.createObjectURL(stream);
-        })
-        .catch((e) => {
-          // TODO: Fallback to a 'real-time canvas drawing method.'
-          console.error('Failed to initialize media.', e);
-        });
-  }
+  navigator.getUserMedia = navigator.getUserMedia ||
+                           navigator.webkitGetUserMedia; // ||
 
   var vgaConstraints :MediaStreamConstraints = {
     video: true,
     audio: true
   }
 
+  var sdpConstraints :MediaConstraints = {
+    mandatory: {
+      OfferToReceiveAudio: true,
+      OfferToReceiveVideo: true
+    }
+  };
+
   /**
    * Returns the promise of a media stream.
    */
   function mediaPromise() {
     return new Promise<MediaStream>((F,R) => {
-      navigator.getUserMedia = navigator.getUserMedia ||
-                                   navigator.webkitGetUserMedia; // ||
                                    // navigator.mozGetUserMedia;
       if (undefined === navigator.getUserMedia) {
         R(new Error('No WebRTC media available.'));
@@ -57,12 +48,137 @@ module SasRtc {
    */
   export class Endpoint {
 
-    // Shared secret.
+    public pc            :RTCPeerConnection;
     private sharedSecret :string;
+    private $vid         :HTMLElement;
+    private stream       :MediaStream;
 
-    constructor(
-      public eid:string  // Endpoint identifier.
-      ) {
+    // To be sent over 'signalling channel' when new ICE candidates arrive.
+    private iceHandler_  :(c:RTCIceCandidate)=>void;
+
+    constructor(public eid:string) {
+      this.pc = new RTCPC(null);
+      // this.pc.addEventListener('negotiationneeded', this.connect_);
+      // this.pc.addEventListener('addstream', (ev) => {
+      this.pc.onaddstream = (ev:RTCMediaStreamEvent) => {
+        console.log('stream event!');
+        console.log(ev.stream);
+      }  //);
+
+      this.pc.onnegotiationneeded = (e:Event) => {
+        console.log(this.eid + ': negotiation needed...');
+        // console.log(e);
+      }
+
+      this.pc.onicecandidate = (e:RTCIceCandidateEvent) => {
+        var candidate = e.candidate;
+        console.log(eid + ': onicecandidate', e);
+        if (null !== candidate) {
+          this.iceHandler_(candidate);
+        }
+      }
+    }
+
+    public initializeLocalMedia = (vidId:string) => {
+      this.$vid = document.getElementById(vidId);
+      if (!this.$vid) {
+        console.error('No DOM video element: ' + vidId);
+        return;
+      }
+      mediaPromise()
+          .then((stream:MediaStream) => {
+            this.stream = stream;
+            this.$vid.src = window.URL.createObjectURL(stream);
+            // console.log(stream);
+            var video = stream.getVideoTracks();
+            var audio = stream.getAudioTracks();
+            console.log(video);
+            console.log(audio);
+            console.log('adding mediastream to peerconnection');
+            this.pc.addStream(stream);
+          })
+          .catch((e) => {
+            // TODO: Fallback to a 'real-time canvas drawing method.'
+            console.error('Failed to initialize media.', e);
+          });
+    }
+
+    private createOffer_ = () : Promise<RTCSessionDescription> => {
+      return new Promise<RTCSessionDescription>((F, R) => {
+        this.pc.createOffer(
+            (offer) => { F(offer) },
+            () => { R(new Error('Failed to create PeerConnection offer.')); }
+        )
+      });
+    }
+
+    private createAnswer_ = () : Promise<RTCSessionDescription> => {
+      return new Promise<RTCSessionDescription>((F, R) => {
+        this.pc.createAnswer(
+            (answer) => { F(answer) },
+            () => { R(new Error('Failed to create PeerConnection offer.')); },
+            sdpConstraints  // Important for audio/video xfer.
+        )
+      });
+    }
+
+    private setLocalDescription_ = (offer:RTCSessionDescription) => {
+      return new Promise((F, R) => {
+        this.pc.setLocalDescription(offer,
+            () => { F(offer) },
+            () => { R(new Error('Failed to setLocalDescription.')); })
+      });
+    }
+
+    /**
+     * Promise for receiving SDP headers as the remote description.
+     */
+    public receive = (offer:RTCSessionDescription) : Promise<void> => {
+      return new Promise<void>((F, R) => {
+        console.log(this.eid + ': received ', offer);
+        this.pc.setRemoteDescription(offer, F,
+            () => { R(new Error('Failed to setRemoteDescription.')); })
+      });
+    }
+
+    /**
+     * Prepare an offer for a peer connection.
+     *
+     * Returns a promise containing the local description, which should be sent
+     * over *some* signalling channel to the remote Endpoint.
+     */
+    public offer = () : Promise<RTCSessionDescription> => {
+      console.log(this.eid + ': creating offer...');
+      return this.createOffer_().then(this.setLocalDescription_);
+      // var config = {
+        // iceServers: [{ 'url':
+      // };
+      // var con = new webkitRTCPeerConnection();
+    }
+
+    /**
+     * Given an offer from a remote endpoint, receive it, and promise an answer
+     * with own SDP headers, which should be sent back to the remote endpoint.
+     */
+    public answer = (offer:RTCSessionDescription)
+        : Promise<RTCSessionDescription> => {
+      return this.receive(offer)
+          .then(this.createAnswer_)
+          .then(this.setLocalDescription_);
+    }
+
+    public addICE = (candidate:RTCIceCandidate) => {
+      console.log(this.eid + ': add ICE candidate ', candidate.candidate);
+      // this.pc.addIceCandidate(candidate);
+      this.pc.addIceCandidate(new RTCIceCandidate(candidate));
+      // () => {
+      // new RTCIceCandidate(candidate), () => {
+        // console.log('success!');
+      // }, () => { console.log('faiiilll.'); });
+    }
+
+    public setICE = (f) => {
+      this.iceHandler_ = f;
     }
 
     // Send public key.
