@@ -43,6 +43,11 @@ module SasRtc {
     });
   }
 
+  export var attachMedia = ($vid:HTMLElement, stream:MediaStream) => {
+    console.log('Attaching stream', stream, ' to element ', $vid);
+    $vid.src = window.URL.createObjectURL(stream);
+  }
+
   /**
    * Represents an endpoint to communicate with.
    */
@@ -51,23 +56,22 @@ module SasRtc {
     public pc            :RTCPeerConnection;
     private sharedSecret :string;
     private $vid         :HTMLElement;
-    private stream       :MediaStream;
+    private $vidRemote   :HTMLElement;
+    public stream        :MediaStream;
 
     // To be sent over 'signalling channel' when new ICE candidates arrive.
     private iceHandler_  :(c:RTCIceCandidate)=>void;
 
     constructor(public eid:string) {
       this.pc = new RTCPC(null);
-      // this.pc.addEventListener('negotiationneeded', this.connect_);
-      // this.pc.addEventListener('addstream', (ev) => {
       this.pc.onaddstream = (ev:RTCMediaStreamEvent) => {
         console.log('stream event!');
         console.log(ev.stream);
-      }  //);
+        attachMedia(this.$vidRemote, ev.stream);
+      }
 
       this.pc.onnegotiationneeded = (e:Event) => {
         console.log(this.eid + ': negotiation needed...');
-        // console.log(e);
       }
 
       this.pc.onicecandidate = (e:RTCIceCandidateEvent) => {
@@ -79,8 +83,10 @@ module SasRtc {
       }
     }
 
-    public initializeLocalMedia = (vidId:string) => {
+    public initializeMedia = (
+        vidId:string, remoteVidId:string) => {
       this.$vid = document.getElementById(vidId);
+      this.$vidRemote = document.getElementById(remoteVidId);
       if (!this.$vid) {
         console.error('No DOM video element: ' + vidId);
         return;
@@ -88,12 +94,10 @@ module SasRtc {
       mediaPromise()
           .then((stream:MediaStream) => {
             this.stream = stream;
-            this.$vid.src = window.URL.createObjectURL(stream);
+            attachMedia(this.$vid, stream);
             // console.log(stream);
-            var video = stream.getVideoTracks();
-            var audio = stream.getAudioTracks();
-            console.log(video);
-            console.log(audio);
+            // var video = stream.getVideoTracks();
+            // var audio = stream.getAudioTracks();
             console.log('adding mediastream to peerconnection');
             this.pc.addStream(stream);
           })

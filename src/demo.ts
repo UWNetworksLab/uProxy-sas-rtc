@@ -8,14 +8,15 @@ var init = () => {
   console.log('Initializing demo...');
   var alice = new SasRtc.Endpoint('alice');
   var bob = new SasRtc.Endpoint('bob');
-  alice.initializeLocalMedia('vidAlice');
-  bob.initializeLocalMedia('vidBob');
+  alice.initializeMedia('vidAliceLocal', 'vidAlice');
+  bob.initializeMedia('vidBobLocal', 'vidBob');
 
   alice.setICE(bob.addICE);
   bob.setICE(alice.addICE);
 
-  // Bind Alice and Bob together.
-  alice.offer()
+  window.setTimeout(() => {
+    // Bind Alice and Bob together.
+    alice.offer()
       .then(bob.answer)
       .then(alice.receive)
       .then(() => {
@@ -26,6 +27,8 @@ var init = () => {
         console.log(bob.pc.getRemoteStreams());
       })
 
+  // The local media needs to be ready before setting up a peer connection.
+  }, 1000);
   // Start audio/video streams.
 }
 
