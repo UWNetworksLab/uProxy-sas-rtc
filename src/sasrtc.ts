@@ -1,10 +1,16 @@
 /// <reference path='interfaces/MediaStream.d.ts' />
 /// <reference path='interfaces/promise.d.ts' />
 
-// Type injections.
+// Type injections because "DefinitelyTyped" is not perfect.
 interface Window { URL :any; }
 interface HTMLElement { src :string; }
+interface RTCPeerConnection {
+  getStats :any;
+}
 interface mozRTCPeerConnection extends RTCPeerConnection {}
+interface MediaStream {
+  id :string;
+}
 
 /**
  * Contains all of SAS-RTC functionality.
@@ -44,7 +50,7 @@ module SasRtc {
   }
 
   export var attachMedia = ($vid:HTMLElement, stream:MediaStream) => {
-    console.log('Attaching stream', stream, ' to element ', $vid);
+    console.log('Attaching stream', stream.id, ' to element', $vid.id);
     $vid.src = window.URL.createObjectURL(stream);
   }
 
@@ -55,6 +61,7 @@ module SasRtc {
 
     public pc            :RTCPeerConnection;
     private sharedSecret :string;
+    private remoteKey    :string;
     private $vid         :HTMLElement;
     private $vidRemote   :HTMLElement;
     public stream        :MediaStream;
@@ -65,18 +72,11 @@ module SasRtc {
     constructor(public eid:string) {
       this.pc = new RTCPC(null);
       this.pc.onaddstream = (ev:RTCMediaStreamEvent) => {
-        console.log('stream event!');
-        console.log(ev.stream);
+        console.log('Received remote stream: ', ev.stream);
         attachMedia(this.$vidRemote, ev.stream);
       }
-
-      this.pc.onnegotiationneeded = (e:Event) => {
-        console.log(this.eid + ': negotiation needed...');
-      }
-
       this.pc.onicecandidate = (e:RTCIceCandidateEvent) => {
         var candidate = e.candidate;
-        console.log(eid + ': onicecandidate', e);
         if (null !== candidate) {
           this.iceHandler_(candidate);
         }
@@ -95,9 +95,6 @@ module SasRtc {
           .then((stream:MediaStream) => {
             this.stream = stream;
             attachMedia(this.$vid, stream);
-            // console.log(stream);
-            // var video = stream.getVideoTracks();
-            // var audio = stream.getAudioTracks();
             console.log('adding mediastream to peerconnection');
             this.pc.addStream(stream);
           })
@@ -140,6 +137,8 @@ module SasRtc {
     public receive = (offer:RTCSessionDescription) : Promise<void> => {
       return new Promise<void>((F, R) => {
         console.log(this.eid + ': received ', offer);
+        this.remoteKey = extractCryptoKey(offer);
+        console.log(this.eid + ': remote key is ' + this.remoteKey);
         this.pc.setRemoteDescription(offer, F,
             () => { R(new Error('Failed to setRemoteDescription.')); })
       });
@@ -172,7 +171,7 @@ module SasRtc {
     }
 
     public addICE = (candidate:RTCIceCandidate) => {
-      console.log(this.eid + ': add ICE candidate ', candidate.candidate);
+      console.log(this.eid + ': adding ICE ' + candidate.candidate);
       // this.pc.addIceCandidate(candidate);
       this.pc.addIceCandidate(new RTCIceCandidate(candidate));
       // () => {
@@ -194,6 +193,26 @@ module SasRtc {
      */
     public startMedia = () => {
     }
+  }
+
+  // This regular expression captures the keyhash from the crypto sdp header.
+  //
+  // For example, given the below header:
+  //  a=crypto:1 AES_CM_128_HMAC_SHA1_80
+  //    inline:FZoIzaV2KYVbd1mO445wH9NNIcE3tbKz0X0AtEok
+
+  // This will capture:
+  //    'FZoIzaV2KYVbd1mO445wH9NNIcE3tbKz0X0AtEok'
+  var SDP_CRYPTO_REGEX = /(?:a=crypto:1.*inline:)(.*)\s/m
+
+  function extractCryptoKey(desc:RTCSessionDescription) : string {
+    var sdp = desc.sdp;
+    var captured = sdp.match(SDP_CRYPTO_REGEX);
+    if (!captured[1]) {
+      console.warn('SDP header does not contain crypto.');
+      return null;
+    }
+    return captured[1];
   }
 
   /**

@@ -21,10 +21,9 @@ var init = () => {
       .then(alice.receive)
       .then(() => {
         console.log('Finished connecting Alice and Bob.');
-        console.log(alice.pc.getLocalStreams());
-        console.log(alice.pc.getRemoteStreams());
-        console.log(bob.pc.getLocalStreams());
-        console.log(bob.pc.getRemoteStreams());
+        alice.pc.getStats(null, (x) => {
+          console.log('stats', x);
+        });
       })
 
   // The local media needs to be ready before setting up a peer connection.
