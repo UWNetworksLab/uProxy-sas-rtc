@@ -8,27 +8,29 @@ var init = () => {
   console.log('Initializing demo...');
   var alice = new SasRtc.Endpoint('alice');
   var bob = new SasRtc.Endpoint('bob');
-  alice.initializeMedia('vidAliceLocal', 'vidAlice');
-  bob.initializeMedia('vidBobLocal', 'vidBob');
+  var aliceReady = alice.startMedia('vidAliceLocal', 'vidAlice');
+  var bobReady = bob.startMedia('vidBobLocal', 'vidBob');
 
-  alice.setICE(bob.addICE);
-  bob.setICE(alice.addICE);
+  alice.setSignalHandler(bob.handleSignal);
+  bob.setSignalHandler(alice.handleSignal);
 
-  window.setTimeout(() => {
-    // Bind Alice and Bob together.
+  var bindAliceAndBob = () => {
     alice.offer()
-      .then(bob.answer)
-      .then(alice.receive)
-      .then(() => {
-        console.log('Finished connecting Alice and Bob.');
-        alice.pc.getStats(null, (x) => {
-          console.log('stats', x);
-        });
-      })
+      .then(bob.answer);
+      // .then(() => {
+        // console.log('Finished connecting Alice and Bob.');
+        // alice.pc.getStats(null, (x) => {
+          // console.log('stats', x);
+        // });
+      // })
+  };
 
-  // The local media needs to be ready before setting up a peer connection.
-  }, 1000);
-  // Start audio/video streams.
-}
+  // Bind Alice and Bob together when media streams are reday.
+  Promise.all(aliceReady, bobReady).then(() => {
+    console.log('Alice and Bob are ready. Connecting...');
+    // bindAliceAndBob();
+    window.setTimeout(bindAliceAndBob, 400);
+  });
+};
 
 window.addEventListener('DOMContentLoaded', init);

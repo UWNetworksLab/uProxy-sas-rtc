@@ -21,7 +21,7 @@ module SasRtc {
   var RTCPC = RTCPC || webkitRTCPeerConnection;  // || mozRTCPeerConnection;
 
   navigator.getUserMedia = navigator.getUserMedia ||
-                           navigator.webkitGetUserMedia; // ||
+                           navigator.webkitGetUserMedia;
 
   var vgaConstraints :MediaStreamConstraints = {
     video: true,
@@ -38,7 +38,7 @@ module SasRtc {
   /**
    * Returns the promise of a media stream.
    */
-  function mediaPromise() {
+  function mediaPromise() : Promise<MediaStream> {
     return new Promise<MediaStream>((F,R) => {
                                    // navigator.mozGetUserMedia;
       if (undefined === navigator.getUserMedia) {
@@ -67,41 +67,76 @@ module SasRtc {
     public stream        :MediaStream;
 
     // To be sent over 'signalling channel' when new ICE candidates arrive.
-    private iceHandler_  :(c:RTCIceCandidate)=>void;
+    // private iceHandler_  :(c:RTCIceCandidate)=>void = null;
+    // public negotiationHandler_ :any = null;
+
+    // External callback for signalling.
+    private sendSignal_ :any;
 
     constructor(public eid:string) {
       this.pc = new RTCPC(null);
       this.pc.onaddstream = (ev:RTCMediaStreamEvent) => {
-        console.log('Received remote stream: ', ev.stream);
+        console.log(this.eid + ': received remote stream: ', ev.stream);
         attachMedia(this.$vidRemote, ev.stream);
       }
       this.pc.onicecandidate = (e:RTCIceCandidateEvent) => {
         var candidate = e.candidate;
         if (null !== candidate) {
-          this.iceHandler_(candidate);
+          this.sendSignal_(JSON.stringify({ candidate: candidate }));
         }
+      }
+      this.pc.onnegotiationneeded = () => {
+        console.log(eid + ': negotiationneeded.');
+        // this.negotiationHandler_ && this.negotiationHandler_();
       }
     }
 
-    public initializeMedia = (
-        vidId:string, remoteVidId:string) => {
+    /**
+     * Promise the initialization of MediaStream for this Endpoint.
+     */
+    public startMedia = (
+        vidId:string, remoteVidId:string) : Promise<void> => {
       this.$vid = document.getElementById(vidId);
       this.$vidRemote = document.getElementById(remoteVidId);
       if (!this.$vid) {
         console.error('No DOM video element: ' + vidId);
         return;
       }
-      mediaPromise()
+      return mediaPromise()
           .then((stream:MediaStream) => {
             this.stream = stream;
-            attachMedia(this.$vid, stream);
             console.log('adding mediastream to peerconnection');
             this.pc.addStream(stream);
+            attachMedia(this.$vid, stream);
           })
           .catch((e) => {
             // TODO: Fallback to a 'real-time canvas drawing method.'
             console.error('Failed to initialize media.', e);
           });
+    }
+
+    /**
+     * Receive a signal, and return a promise that it's been handled.
+     * Assumes |msg| is valid JSON.
+     */
+    public handleSignal = (msg:string) => {
+      var json = JSON.parse(msg);
+      if (json.sdp) {
+        console.log(this.eid + ': recv ', msg);
+        this.receive_(new RTCSessionDescription(json.sdp))
+            .then((offer) => {
+              this.remoteKey = extractCryptoKey(offer);
+              console.log(this.eid + ': remote key is ' + this.remoteKey);
+            });
+      } else if (json.candidate) {
+        this.addICE(json.candidate);
+      } else {
+        console.warn(this.eid + ': unexpected signal', msg);
+      }
+    }
+
+    public setSignalHandler = (handler:(json:string)=>void) => {
+      this.sendSignal_ = handler;
     }
 
     private createOffer_ = () : Promise<RTCSessionDescription> => {
@@ -115,31 +150,39 @@ module SasRtc {
 
     private createAnswer_ = () : Promise<RTCSessionDescription> => {
       return new Promise<RTCSessionDescription>((F, R) => {
-        this.pc.createAnswer(
-            (answer) => { F(answer) },
+        this.pc.createAnswer(F,
             () => { R(new Error('Failed to create PeerConnection offer.')); },
             sdpConstraints  // Important for audio/video xfer.
         )
       });
     }
 
+    /**
+     * Promise setting the local description to |offer|, and also fire a signal.
+     * The application is responsible for passing this to the remote.
+     */
     private setLocalDescription_ = (offer:RTCSessionDescription) => {
       return new Promise((F, R) => {
         this.pc.setLocalDescription(offer,
-            () => { F(offer) },
-            () => { R(new Error('Failed to setLocalDescription.')); })
+            () => {
+              console.log(this.eid + ': set local desc. sending sig');
+              this.sendSignal_(JSON.stringify({ sdp: offer }));
+              F(offer);
+            },
+            () => {
+              R(new Error('Failed to setLocalDescription.'));
+            })
       });
     }
 
     /**
-     * Promise for receiving SDP headers as the remote description.
+     * Promise for setting the remote description in response to receiving SDP
+     * headers from other endpoint.
      */
-    public receive = (offer:RTCSessionDescription) : Promise<void> => {
+    private receive_ = (offer:RTCSessionDescription) : Promise<RTCSessionDescription> => {
       return new Promise<void>((F, R) => {
-        console.log(this.eid + ': received ', offer);
-        this.remoteKey = extractCryptoKey(offer);
-        console.log(this.eid + ': remote key is ' + this.remoteKey);
-        this.pc.setRemoteDescription(offer, F,
+        this.pc.setRemoteDescription(offer,
+            () => { F(offer); },
             () => { R(new Error('Failed to setRemoteDescription.')); })
       });
     }
@@ -153,47 +196,26 @@ module SasRtc {
     public offer = () : Promise<RTCSessionDescription> => {
       console.log(this.eid + ': creating offer...');
       return this.createOffer_().then(this.setLocalDescription_);
-      // var config = {
-        // iceServers: [{ 'url':
-      // };
-      // var con = new webkitRTCPeerConnection();
     }
 
     /**
+     * Prepare an answer in response to an offer.
+     *
      * Given an offer from a remote endpoint, receive it, and promise an answer
      * with own SDP headers, which should be sent back to the remote endpoint.
      */
     public answer = (offer:RTCSessionDescription)
         : Promise<RTCSessionDescription> => {
-      return this.receive(offer)
-          .then(this.createAnswer_)
-          .then(this.setLocalDescription_);
+      return this.createAnswer_().then(this.setLocalDescription_);
     }
 
     public addICE = (candidate:RTCIceCandidate) => {
-      console.log(this.eid + ': adding ICE ' + candidate.candidate);
-      // this.pc.addIceCandidate(candidate);
+      // console.log(this.eid + ': adding ICE ' + candidate.candidate);
       this.pc.addIceCandidate(new RTCIceCandidate(candidate));
-      // () => {
-      // new RTCIceCandidate(candidate), () => {
-        // console.log('success!');
-      // }, () => { console.log('faiiilll.'); });
     }
 
-    public setICE = (f) => {
-      this.iceHandler_ = f;
-    }
+  }  // class Endpoint
 
-    // Send public key.
-    public verify = () => {
-    }
-
-    /**
-     * Begin media locally, and await the other end.
-     */
-    public startMedia = () => {
-    }
-  }
 
   // This regular expression captures the keyhash from the crypto sdp header.
   //
@@ -208,7 +230,7 @@ module SasRtc {
   function extractCryptoKey(desc:RTCSessionDescription) : string {
     var sdp = desc.sdp;
     var captured = sdp.match(SDP_CRYPTO_REGEX);
-    if (!captured[1]) {
+    if (!captured || !captured[1]) {
       console.warn('SDP header does not contain crypto.');
       return null;
     }

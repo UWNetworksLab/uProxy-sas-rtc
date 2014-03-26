@@ -13,8 +13,8 @@ interface Error {
  * `rejected`.
  **/
 interface Thenable<T> {
-  then:(fulfill:(t?:T) => void,
-        reject?:(e:Error) => void) => Thenable<T>;
+  then<T2>(fulfill:(t?:T) => T2,
+            reject?:(e:Error) => T2) : Thenable<T2>;
 }
 
 /**
@@ -25,11 +25,12 @@ declare class Promise<T> {
   constructor(resolverFunction:(fulfill:(t?:T) => void,
                                 reject:(e:Error) => void) => void);
 
-  // then either returns subsiquent promise<T2> ...
-  then<T2>(fulfill:(t:T) => Promise<T2>, reject?:(e:Error) => Promise<T2>)
+  // then either returns subsequent promise<T2> ...
+  then<T2>(fulfill:(t?:T) => Promise<T2>, reject?:(e:Error) => Promise<T2>)
       : Promise<T2>;
   // ... or the next fulfillment object directly.
-  then<T2>(fulfill?:(t:T) => T2, reject?:(e:Error) => T2) : Promise<T2>;
+  then<T2>(fulfill:(t?:T) => T2, reject?:(e:Error) => T2) : Promise<T2>;
+  then(fulfill:(t?:T) => void, reject?:(e:Error) => void) : Promise<void>;
 
   catch(catchFn:(e:Error) => Promise<T>) : Promise<T>;
   catch(catchFn:(e:Error) => T) : Promise<T>;
