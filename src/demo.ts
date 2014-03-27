@@ -8,8 +8,8 @@ var init = () => {
   console.log('Initializing demo...');
   var alice = new SasRtc.Endpoint('alice');
   var bob = new SasRtc.Endpoint('bob');
-  var aliceReady = alice.startMedia('vidAliceLocal', 'vidAlice');
-  var bobReady = bob.startMedia('vidBobLocal', 'vidBob');
+  var aliceReady = alice.startMedia('vidAliceLocal', 'vidAlice', 'sasAlice');
+  var bobReady = bob.startMedia('vidBobLocal', 'vidBob', 'sasBob');
 
   alice.setSignalHandler(bob.handleSignal);
   bob.setSignalHandler(alice.handleSignal);

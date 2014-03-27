@@ -1,9 +1,14 @@
 /// <reference path='interfaces/MediaStream.d.ts' />
 /// <reference path='interfaces/promise.d.ts' />
+/// <reference path='pgp-words.ts' />
 
 // Type injections because "DefinitelyTyped" is not perfect.
 interface Window { URL :any; }
-interface HTMLElement { src :string; }
+interface HTMLElement {
+  src :string;
+}
+interface HTMLVideoElement extends HTMLElement {}
+interface HTMLTextAreaElement extends HTMLElement {}
 interface RTCPeerConnection {
   getStats :any;
 }
@@ -17,6 +22,8 @@ interface MediaStream {
  * Only works on Chrome or Firefox.
  */
 module SasRtc {
+
+  var MAX_SAS_LENGTH = 4;  // Maximum number of words to say.
 
   var RTCPC = RTCPC || webkitRTCPeerConnection;  // || mozRTCPeerConnection;
 
@@ -36,6 +43,23 @@ module SasRtc {
   };
 
   /**
+   * Given a Hex string containing bytes separated by colons, eg.
+   *    B0:73:A8: .. :FF
+   * Generate Short Authentication String using the PGP word list.
+   *
+   * See: https://en.wikipedia.org/wiki/PGP_word_list
+   */
+  export function generateSAS(fingerprint:string) : string {
+    var hexBytes :string[] = fingerprint.split(':')
+                                        .slice(0, MAX_SAS_LENGTH);
+    return hexBytes.map((hexByte, index) => {
+      // Index into the PGP word list first by the actual hex value, but also
+      // swap between even and odd lists
+      return PGP.WORDS[parseInt(hexByte, 16)][index % 2];
+    }).join(' ');
+  }
+
+  /**
    * Returns the promise of a media stream.
    */
   function mediaPromise() : Promise<MediaStream> {
@@ -49,7 +73,7 @@ module SasRtc {
     });
   }
 
-  export var attachMedia = ($vid:HTMLElement, stream:MediaStream) => {
+  export var attachMedia = ($vid:HTMLVideoElement, stream:MediaStream) => {
     console.log('Attaching stream', stream.id, ' to element', $vid.id);
     $vid.src = window.URL.createObjectURL(stream);
   }
@@ -60,18 +84,19 @@ module SasRtc {
   export class Endpoint {
 
     public pc            :RTCPeerConnection;
-    private sharedSecret :string;
-    private remoteKey    :string;
-    private $vid         :HTMLElement;
-    private $vidRemote   :HTMLElement;
     public stream        :MediaStream;
 
-    // To be sent over 'signalling channel' when new ICE candidates arrive.
-    // private iceHandler_  :(c:RTCIceCandidate)=>void = null;
-    // public negotiationHandler_ :any = null;
+    private remoteKey    :string;
+    private fingerprint  :string;
+    private sas          :string;
+
+    // TODO: Angularjs-afy everything to do with the DOM.
+    private $vid         :HTMLVideoElement;
+    private $vidRemote   :HTMLVideoElement;
+    private $sas         :HTMLTextAreaElement;
 
     // External callback for signalling.
-    private sendSignal_ :any;
+    private sendSignal_ :(json:string)=>void;
 
     constructor(public eid:string) {
       this.pc = new RTCPC(null);
@@ -86,8 +111,7 @@ module SasRtc {
         }
       }
       this.pc.onnegotiationneeded = () => {
-        console.log(eid + ': negotiationneeded.');
-        // this.negotiationHandler_ && this.negotiationHandler_();
+        console.log(eid + ': negotiationneeded. (currently doing nothing)');
       }
     }
 
@@ -95,9 +119,15 @@ module SasRtc {
      * Promise the initialization of MediaStream for this Endpoint.
      */
     public startMedia = (
-        vidId:string, remoteVidId:string) : Promise<void> => {
-      this.$vid = document.getElementById(vidId);
-      this.$vidRemote = document.getElementById(remoteVidId);
+        vidId:string,
+        remoteVidId:string,
+        sasId?:string)  // Whatever text field will contain the SAS.
+          : Promise<void> => {
+      this.$vid = <HTMLVideoElement>document.getElementById(vidId);
+      this.$vidRemote = <HTMLVideoElement>document.getElementById(remoteVidId);
+      if (sasId) {
+        this.$sas = <HTMLTextAreaElement>document.getElementById(sasId);
+      }
       if (!this.$vid) {
         console.error('No DOM video element: ' + vidId);
         return;
@@ -122,11 +152,18 @@ module SasRtc {
     public handleSignal = (msg:string) => {
       var json = JSON.parse(msg);
       if (json.sdp) {
-        console.log(this.eid + ': recv ', msg);
+        console.log(this.eid + ': recv ', JSON.parse(msg));
         this.receive_(new RTCSessionDescription(json.sdp))
             .then((offer) => {
-              this.remoteKey = extractCryptoKey(offer);
-              console.log(this.eid + ': remote key is ' + this.remoteKey);
+              // this.remoteKey = extractCryptoKey(offer);
+              // console.log(this.eid + ': remote key is ' + this.remoteKey);
+              this.fingerprint = extractFingerprint(offer);
+              console.log(this.eid + ': fingerprint is ' + this.fingerprint);
+              this.sas = generateSAS(this.fingerprint);
+              console.log(this.eid + ': SAS: ' + this.sas);
+              if (this.$sas) {
+                this.$sas.value = this.sas;
+              }
             });
       } else if (json.candidate) {
         this.addICE(json.candidate);
@@ -158,14 +195,16 @@ module SasRtc {
     }
 
     /**
-     * Promise setting the local description to |offer|, and also fire a signal.
-     * The application is responsible for passing this to the remote.
+     * Promise this endpoint's local description is set to |offer|.
+     * Afterwards, fire the sendSignal handler with the new SDP header.
+     *
+     * The application is expected to pass the SDP along some signalling channel
+     * to the remote endpoint.
      */
     private setLocalDescription_ = (offer:RTCSessionDescription) => {
       return new Promise((F, R) => {
         this.pc.setLocalDescription(offer,
             () => {
-              console.log(this.eid + ': set local desc. sending sig');
               this.sendSignal_(JSON.stringify({ sdp: offer }));
               F(offer);
             },
@@ -180,7 +219,7 @@ module SasRtc {
      * headers from other endpoint.
      */
     private receive_ = (offer:RTCSessionDescription) : Promise<RTCSessionDescription> => {
-      return new Promise<void>((F, R) => {
+      return new Promise((F, R) => {
         this.pc.setRemoteDescription(offer,
             () => { F(offer); },
             () => { R(new Error('Failed to setRemoteDescription.')); })
@@ -194,7 +233,6 @@ module SasRtc {
      * over *some* signalling channel to the remote Endpoint.
      */
     public offer = () : Promise<RTCSessionDescription> => {
-      console.log(this.eid + ': creating offer...');
       return this.createOffer_().then(this.setLocalDescription_);
     }
 
@@ -226,6 +264,7 @@ module SasRtc {
   // This will capture:
   //    'FZoIzaV2KYVbd1mO445wH9NNIcE3tbKz0X0AtEok'
   var SDP_CRYPTO_REGEX = /(?:a=crypto:1.*inline:)(.*)\s/m
+  var SDP_FINGERPRINT_REGEX = /(?:a=fingerprint:sha-256\s)(.*)\s/m
 
   function extractCryptoKey(desc:RTCSessionDescription) : string {
     var sdp = desc.sdp;
@@ -237,10 +276,14 @@ module SasRtc {
     return captured[1];
   }
 
-  /**
-   * Represents an authentication session.
-   */
-  export class Session {
+  function extractFingerprint(desc:RTCSessionDescription) : string {
+    var sdp = desc.sdp;
+    var captured = sdp.match(SDP_FINGERPRINT_REGEX);
+    if (!captured || !captured[1]) {
+      console.warn('SDP header does not contain fingerprint.');
+      return null;
+    }
+    return captured[1];
   }
 
 }  // module SasRtc
