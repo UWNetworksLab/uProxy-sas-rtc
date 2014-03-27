@@ -6,8 +6,8 @@
 
 var init = () => {
   console.log('Initializing demo...');
-  var alice = new SasRtc.Endpoint('alice');
-  var bob = new SasRtc.Endpoint('bob');
+  var alice = new SasRtc.Peer('alice');
+  var bob = new SasRtc.Peer('bob');
   var aliceReady = alice.startMedia('vidAliceLocal', 'vidAlice', 'sasAlice');
   var bobReady = bob.startMedia('vidBobLocal', 'vidBob', 'sasBob');
 
@@ -17,12 +17,6 @@ var init = () => {
   var bindAliceAndBob = () => {
     alice.offer()
       .then(bob.answer);
-      // .then(() => {
-        // console.log('Finished connecting Alice and Bob.');
-        // alice.pc.getStats(null, (x) => {
-          // console.log('stats', x);
-        // });
-      // })
   };
 
   // Bind Alice and Bob together when media streams are reday.

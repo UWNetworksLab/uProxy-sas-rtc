@@ -81,7 +81,7 @@ module SasRtc {
   /**
    * Represents an endpoint to communicate with.
    */
-  export class Endpoint {
+  export class Peer {
 
     public pc            :RTCPeerConnection;
     public stream        :MediaStream;
@@ -116,7 +116,7 @@ module SasRtc {
     }
 
     /**
-     * Promise the initialization of MediaStream for this Endpoint.
+     * Promise the initialization of MediaStream for this Peer.
      */
     public startMedia = (
         vidId:string,
@@ -230,7 +230,7 @@ module SasRtc {
      * Prepare an offer for a peer connection.
      *
      * Returns a promise containing the local description, which should be sent
-     * over *some* signalling channel to the remote Endpoint.
+     * over *some* signalling channel to the remote Peer.
      */
     public offer = () : Promise<RTCSessionDescription> => {
       return this.createOffer_().then(this.setLocalDescription_);
@@ -252,7 +252,7 @@ module SasRtc {
       this.pc.addIceCandidate(new RTCIceCandidate(candidate));
     }
 
-  }  // class Endpoint
+  }  // class Peer
 
 
   // This regular expression captures the keyhash from the crypto sdp header.
